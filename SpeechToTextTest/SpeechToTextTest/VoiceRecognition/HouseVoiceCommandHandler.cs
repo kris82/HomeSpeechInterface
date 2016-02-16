@@ -26,8 +26,9 @@ namespace SpeechToTextTest.VoiceRecognition
         private object checkLastSpeechLock = new object();
         
         // Do not access this variable directly, it should be synchronized access through methods.
-        public DateTime LastSpeechTime { get; set; }
+        private DateTime LastSpeechTime { get; set; }
 
+        private LightActionSpec LightActionSpec { get; set; }
 
         private object stateLock = new object();
         private bool _commandInitiated;
@@ -55,6 +56,7 @@ namespace SpeechToTextTest.VoiceRecognition
         {
             CommandInitiated = false;
             LastSpeechTime = DateTime.MinValue;
+            LightActionSpec = new LightActionSpec();
         }
 
         public Task InitiateSpeechRecognition()
@@ -63,13 +65,11 @@ namespace SpeechToTextTest.VoiceRecognition
 
             var initiateCommandGrammerBuilder = new GrammarBuilder(InitiateCommandsPhrase);
             var cancelOverrideGrammarBuilder = new GrammarBuilder(CancelProgramCommand);
-            var lightGrammerBuilder = CreateLightCommandGrammar();
-            var finalGrammarBuilder = CombineGrammarBuilders(initiateCommandGrammerBuilder, cancelOverrideGrammarBuilder, lightGrammerBuilder);
+            var lightGrammerBuilder = CreateLightCommandGrammar(LightActionSpec);
+            var finalGrammarBuilder = GrammarHelper.CombineGrammarBuilders(initiateCommandGrammerBuilder, cancelOverrideGrammarBuilder, lightGrammerBuilder);
 
             var recognizerInfo = SpeechRecognitionEngine.InstalledRecognizers().FirstOrDefault(ri => ri.Culture.TwoLetterISOLanguageName.Equals("en"));
-
-            var speechRecognitionTask = Task.Run(() => RunSpeechRecognizer(finalGrammarBuilder, recognizerInfo));
-            return speechRecognitionTask;
+            return Task.Run(() => RunSpeechRecognizer(finalGrammarBuilder, recognizerInfo)); ;
         }
 
         private void RunSpeechRecognizer(GrammarBuilder finalGrammarBuilder, RecognizerInfo recognizerInfo)
@@ -107,12 +107,14 @@ namespace SpeechToTextTest.VoiceRecognition
 
         private void Engine_SpeechRecognized(object sender, SpeechRecognizedEventArgs e)
         {
+            // Handle special Action Start.
             if (string.Equals(e.Result.Text, InitiateCommandsPhrase, StringComparison.OrdinalIgnoreCase))
             {
                 Console.WriteLine("Acknowledged...");
                 ComputerFeedbackPlayer.PlayComputerInit();
                 CommandInitiated = true;
             }
+            // Handle special action Cancel Override.
             else if(string.Equals(e.Result.Text, CancelProgramCommand, StringComparison.OrdinalIgnoreCase))
             {
                 Console.WriteLine("Program Quit Detected.");
@@ -122,6 +124,7 @@ namespace SpeechToTextTest.VoiceRecognition
             {
                 if(!CommandInitiated)
                 {
+                    // Ignore matching commands if Commands are not initiated by start command.
                     return;
                 }
 
@@ -135,7 +138,8 @@ namespace SpeechToTextTest.VoiceRecognition
 
                 var subject = e.Result.Semantics[CommandSubjectSemanticKey];
 
-                if (Equals(subject.Value, LightVoiceSubject.LightSubjectSemanticValue))
+                // TODO this should be configured not hardcoded for when there are more than just light actions.
+                if (Equals(subject.Value, LightActionSpec.LightSubjectSemanticValue))
                 {
                     ComputerFeedbackPlayer.PlayComputerAck();
 
@@ -145,8 +149,11 @@ namespace SpeechToTextTest.VoiceRecognition
                         //throw new Exception("A command with the light subject must contain a light identifier and action semantic.");
                     }
 
+                    // TODO consider also making this configured by the action spec itself.  Something like expected Semantic Keys.
                     var identifier = e.Result.Semantics[LightIdentifierSemanticKey];
                     var action = e.Result.Semantics[LightActionSemanticKey];
+
+                    LightActionSpec.ExecuteAction((string)action.Value, (string)identifier.Value);
 
                     Console.WriteLine("Grammer match: {0}", e.Result.Text);
                     Console.WriteLine("subject:{0}, action:{1}, identifier:{2}", subject.Value, action.Value, identifier.Value);
@@ -182,105 +189,38 @@ namespace SpeechToTextTest.VoiceRecognition
             }
         }
 
-        public static GrammarBuilder CombineGrammarBuilders(params GrammarBuilder[] grammars)
+        private static GrammarBuilder CreateLightCommandGrammar(LightActionSpec lightActionSpec)
         {
-            if(grammars.Length < 1)
+            var allLightsIdentifierChoices = GrammarHelper.ConvertIdentyListToGrammarBuilder(lightActionSpec.LightIdentifiers.ToList());
+            var lightActions = lightActionSpec.GetAllActions();
+            var lightsLables = lightActionSpec.GetLightSubjectChoices();
+
+            var actionGrammarBuilders = new List<GrammarBuilder>();
+            foreach(var action in lightActions)
             {
-                throw new ArgumentException("Must pass in at least one grammar to combine.");
+                var actionChoices = action.ToChoices();
+
+                var actionGrammer1 = new GrammarBuilder();
+                actionGrammer1.AppendWildcard();
+                actionGrammer1.Append(new SemanticResultKey(LightActionSemanticKey, actionChoices));
+                actionGrammer1.AppendWildcard();
+                actionGrammer1.Append(new SemanticResultKey(LightIdentifierSemanticKey, allLightsIdentifierChoices));
+                actionGrammer1.AppendWildcard();
+                actionGrammer1.Append(new SemanticResultKey(CommandSubjectSemanticKey, lightsLables));
+
+                var actionGrammar2 = new GrammarBuilder();
+                actionGrammar2.AppendWildcard();
+                actionGrammar2.Append(new SemanticResultKey(LightActionSemanticKey, actionChoices));
+                actionGrammar2.AppendWildcard();
+                actionGrammar2.Append(new SemanticResultKey(CommandSubjectSemanticKey, lightsLables));
+                actionGrammar2.AppendWildcard();
+                actionGrammar2.Append(new SemanticResultKey(LightIdentifierSemanticKey, allLightsIdentifierChoices));
+
+                actionGrammarBuilders.Add(actionGrammer1);
+                actionGrammarBuilders.Add(actionGrammar2);
             }
 
-            var choices = new Choices(grammars);
-            return new GrammarBuilder(choices);
+            return new GrammarBuilder(new Choices(actionGrammarBuilders.ToArray()));
         }
-
-        private static GrammarBuilder ConvertIdentyListToGrammarBuilder(List<LightVoiceIdentifier> identifiers)
-        {
-            List<GrammarBuilder> grammarBuilders = new List<GrammarBuilder>();
-            foreach (var identifier in identifiers)
-            {
-                var labels = identifier.LightVoiceLabels;
-                var choices = new Choices();
-                foreach (var label in labels)
-                {
-                    choices.Add(new SemanticResultValue(label, identifier.LightLabelSemanticValue));
-                }
-
-                grammarBuilders.Add(new GrammarBuilder(choices));
-            }
-
-            return new GrammarBuilder(new Choices(grammarBuilders.ToArray()));
-        }
-
-        private static GrammarBuilder CreateLightCommandGrammar()
-        {
-            var houseLightingModel = new List<LightVoiceIdentifier>();
-            houseLightingModel.Add(new LightVoiceIdentifier("MASTER_BEDROOM", new List<string> { "master bedroom", "big bedroom", "suite" }));
-            houseLightingModel.Add(new LightVoiceIdentifier("SMALL_BATHROOM", new List<string> { "half bath" }));
-            houseLightingModel.Add(new LightVoiceIdentifier("BIG_BATHROOM", new List<string> { "big bathroom", "main bathroom" }));
-            houseLightingModel.Add(new LightVoiceIdentifier("KITCHEN", new List<string> { "kitchen", "dining room" }));
-            houseLightingModel.Add(new LightVoiceIdentifier("LIVING_ROOM", new List<string> { "living room", "tv room", "entrance" }));
-            houseLightingModel.Add(new LightVoiceIdentifier("GARAGE", new List<string> { "garage", "car port" }));
-            houseLightingModel.Add(new LightVoiceIdentifier("OFFICE", new List<string> { "office", "computer room" }));
-            houseLightingModel.Add(new LightVoiceIdentifier("HALLWAY", new List<string> { "hallway" }));
-            houseLightingModel.Add(new LightVoiceIdentifier("GUEST_BEDROOM", new List<string> { "guest bedroom" }));
-            houseLightingModel.Add(new LightVoiceIdentifier("HEDGEHOG_ROOM", new List<string> { "hedgehog room" }));
-            houseLightingModel.Add(LightVoiceIdentifier.GetAllLightsIdentifier());
-
-            var lightSubject = new LightVoiceSubject();
-            var turnOnAction = new TurnOnVoiceAction();
-            var turnOffAction = new TurnOffVoiceAction();
-
-            var allLightsIdentifierChoices = ConvertIdentyListToGrammarBuilder(houseLightingModel);
-
-            var turnOnActionChoices = turnOnAction.ToChoices();
-            var turnOffActionChoices = turnOffAction.ToChoices();
-            var lightsLables = lightSubject.ToChoices();
-
-            // Action 1: Turn on lights, all
-            var turnOnAllLightsGrammar = new GrammarBuilder();
-            turnOnAllLightsGrammar.AppendWildcard();
-            turnOnAllLightsGrammar.Append(new SemanticResultKey(LightActionSemanticKey, turnOnActionChoices));
-            turnOnAllLightsGrammar.AppendWildcard();
-            turnOnAllLightsGrammar.Append(new SemanticResultKey(LightIdentifierSemanticKey, allLightsIdentifierChoices));
-            turnOnAllLightsGrammar.AppendWildcard();
-            turnOnAllLightsGrammar.Append(new SemanticResultKey(CommandSubjectSemanticKey, lightsLables));
-
-            var turnOnAllLightsGrammar2 = new GrammarBuilder();
-            turnOnAllLightsGrammar2.AppendWildcard();
-            turnOnAllLightsGrammar2.Append(new SemanticResultKey(LightActionSemanticKey, turnOnActionChoices));
-            turnOnAllLightsGrammar2.AppendWildcard();
-            turnOnAllLightsGrammar2.Append(new SemanticResultKey(CommandSubjectSemanticKey, lightsLables));
-            turnOnAllLightsGrammar2.AppendWildcard();
-            turnOnAllLightsGrammar2.Append(new SemanticResultKey(LightIdentifierSemanticKey, allLightsIdentifierChoices));
-
-            // Action 2: Turn off lights, all
-            var turnOffAllLightsGrammer = new GrammarBuilder();
-            turnOffAllLightsGrammer.AppendWildcard();
-            turnOffAllLightsGrammer.Append(new SemanticResultKey(LightActionSemanticKey, turnOffActionChoices));
-            turnOffAllLightsGrammer.AppendWildcard();
-            turnOffAllLightsGrammer.Append(new SemanticResultKey(LightIdentifierSemanticKey, allLightsIdentifierChoices));
-            turnOffAllLightsGrammer.AppendWildcard();
-            turnOffAllLightsGrammer.Append(new SemanticResultKey(CommandSubjectSemanticKey, lightsLables));
-
-            var turnOffAllLightsGrammer2 = new GrammarBuilder();
-            turnOffAllLightsGrammer2.AppendWildcard();
-            turnOffAllLightsGrammer2.Append(new SemanticResultKey(LightActionSemanticKey, turnOffActionChoices));
-            turnOffAllLightsGrammer2.AppendWildcard();
-            turnOffAllLightsGrammer2.Append(new SemanticResultKey(CommandSubjectSemanticKey, lightsLables));
-            turnOffAllLightsGrammer2.AppendWildcard();
-            turnOffAllLightsGrammer2.Append(new SemanticResultKey(LightIdentifierSemanticKey, allLightsIdentifierChoices));
-
-            var allLightsChoices = new Choices();
-            allLightsChoices.Add(
-                turnOnAllLightsGrammar,
-                turnOnAllLightsGrammar2,
-                turnOffAllLightsGrammer,
-                turnOffAllLightsGrammer2);
-            var finalLightsGrammerBuilder = new GrammarBuilder();
-            finalLightsGrammerBuilder.Append(allLightsChoices);
-
-            return finalLightsGrammerBuilder;
-        }
-
     }
 }

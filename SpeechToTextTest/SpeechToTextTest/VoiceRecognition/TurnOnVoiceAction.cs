@@ -1,15 +1,16 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Speech.Recognition;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace SpeechToTextTest.VoiceRecognition
+﻿namespace SpeechToTextTest.VoiceRecognition
 {
+    using System;
+    using System.Speech.Recognition;
+
     public class TurnOnVoiceAction : IVoiceAction
     {
         public const string TurnOnLightsSemanticValue = "TURN_ON";
+
+        public void ExecuteAction(LightVoiceIdentifier lightIdentifier)
+        {
+            Console.WriteLine("EXECUTING THE TURN ON ACTION ON LIGHT ID {0}", lightIdentifier.LightLabelSemanticValue);
+        }
 
         public Choices ToChoices()
         {

@@ -44,15 +44,15 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="GrammarHelper.cs" />
     <Compile Include="IGrammarEntity.cs" />
     <Compile Include="SoundFeedback\ComputerFeedbackPlayer.cs" />
     <Compile Include="VoiceRecognition\HouseVoiceCommandHandler.cs" />
     <Compile Include="VoiceRecognition\IVoiceAction.cs" />
     <Compile Include="VoiceRecognition\IVoiceIdentifier.cs" />
-    <Compile Include="VoiceRecognition\LightVoiceSubject.cs" />
+    <Compile Include="VoiceRecognition\LightActionSpec.cs" />
     <Compile Include="VoiceRecognition\TurnOffVoiceAction.cs" />
     <Compile Include="VoiceRecognition\TurnOnVoiceAction.cs" />
-    <Compile Include="VoiceRecognition\LightVoiceCommand.cs" />
     <Compile Include="VoiceRecognition\LightVoiceIdentifier.cs" />
     <Compile Include="LightsGrammars.cs" />
     <Compile Include="Program.cs" />

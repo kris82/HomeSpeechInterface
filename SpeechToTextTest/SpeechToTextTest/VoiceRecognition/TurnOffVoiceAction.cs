@@ -1,17 +1,27 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Speech.Recognition;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace SpeechToTextTest.VoiceRecognition
+﻿namespace SpeechToTextTest.VoiceRecognition
 {
+    using System;
+    using System.Speech.Recognition;
+
     public class TurnOffVoiceAction : IVoiceAction
     {
+        public const string TurnOffLightsSemanticValue = "TURN_OFF";
+
+        public void ExecuteAction(LightVoiceIdentifier lightIdentifier)
+        {
+            Console.WriteLine("EXECUTING THE TURN OFF ACTION ON LIGHT ID {0}", lightIdentifier.LightLabelSemanticValue);
+        }
+
         public Choices ToChoices()
         {
-            return new Choices(LightsGrammars.TurnOffLightCommands.ToArray());
+            var choices = new Choices();
+
+            foreach (var commandText in LightsGrammars.TurnOffLightCommands)
+            {
+                choices.Add(new SemanticResultValue(commandText, TurnOffLightsSemanticValue));
+            }
+
+            return choices;
         }
     }
 }
